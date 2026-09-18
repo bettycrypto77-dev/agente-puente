@@ -1,0 +1,15 @@
+# Root directory for inboxes (default: ~/agente-puente)
+root = "~/agente-puente"
+
+# Agents: inbox folder name under root is a-<id>/
+[[agents]]
+id = "claude"
+process = "claude"
+
+[[agents]]
+id = "trader"
+process = ""
+
+[[agents]]
+id = "agy"
+process = "agy"

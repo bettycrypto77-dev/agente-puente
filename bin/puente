@@ -1,0 +1,282 @@
+#!/usr/bin/env bash
+# puente — multi-agent file bridge CLI
+set -euo pipefail
+
+PUENTE_VERSION="0.1.0"
+
+usage() {
+  cat <<'USAGE'
+puente — each AI stays in its own harness; talk via markdown files
+
+Usage:
+  puente init [dir]                 Create bridge directories + example config
+  puente new <from> <to> <slug>     Write a message (body on stdin)
+  puente inbox [agent]              List pending messages
+  puente done <id-or-file>          Archive message to hecho/
+  puente ping <agent> "msg"         Short tmux nudge (by process name)
+  puente watch [--interval N]       Poll inboxes (Ctrl-C to stop)
+  puente agents                     List configured agents
+  puente version | --help
+
+Env:
+  PUENTE_ROOT   Override root (default ~/agente-puente or config)
+USAGE
+}
+
+expand_home() {
+  local p="$1"
+  if [[ "$p" == ~* ]]; then
+    p="${p/#\~/$HOME}"
+  fi
+  printf '%s' "$p"
+}
+
+find_config() {
+  if [[ -f "${PUENTE_CONFIG:-}" ]]; then
+    printf '%s' "$PUENTE_CONFIG"
+    return
+  fi
+  local c
+  for c in "$PWD/puente.toml" "$HOME/.config/puente/puente.toml" "$HOME/agente-puente/puente.toml"; do
+    if [[ -f "$c" ]]; then
+      printf '%s' "$c"
+      return
+    fi
+  done
+  return 1
+}
+
+config_root() {
+  local cfg root
+  if cfg=$(find_config 2>/dev/null); then
+    root=$(awk -F'=' '/^[[:space:]]*root[[:space:]]*=/ {gsub(/[" ]/,"",$2); print $2; exit}' "$cfg" || true)
+    if [[ -n "${root:-}" ]]; then
+      expand_home "$root"
+      return
+    fi
+  fi
+  expand_home "${PUENTE_ROOT:-~/agente-puente}"
+}
+
+list_agent_ids_from_config() {
+  local cfg
+  if ! cfg=$(find_config 2>/dev/null); then
+    return 1
+  fi
+  awk '
+    /^\[\[agents\]\]/ { in_a=1; next }
+    /^\[/ { in_a=0 }
+    in_a && /^[[:space:]]*id[[:space:]]*=/ {
+      gsub(/[" ]/,"",$0)
+      sub(/^id=/,"",$0)
+      print
+    }
+  ' "$cfg"
+}
+
+agent_process() {
+  local want="$1" cfg id="" proc=""
+  if ! cfg=$(find_config 2>/dev/null); then
+    printf '%s' "$want"
+    return
+  fi
+  while IFS= read -r line; do
+    if [[ "$line" == "[[agents]]" ]]; then
+      id=""; proc=""
+      continue
+    fi
+    if [[ "$line" =~ ^[[:space:]]*id[[:space:]]*= ]]; then
+      id="${line#*=}"
+      id="${id//[\" ]/}"
+    elif [[ "$line" =~ ^[[:space:]]*process[[:space:]]*= ]]; then
+      proc="${line#*=}"
+      proc="${proc//[\" ]/}"
+      if [[ "$id" == "$want" ]]; then
+        printf '%s' "${proc:-$want}"
+        return
+      fi
+    fi
+  done < "$cfg"
+  printf '%s' "$want"
+}
+
+inbox_dir() {
+  local root agent
+  root=$(config_root)
+  agent="$1"
+  printf '%s/a-%s' "$root" "$agent"
+}
+
+cmd_init() {
+  local dir
+  dir=$(expand_home "${1:-~/agente-puente}")
+  mkdir -p "$dir"/{hecho,a-claude,a-trader,a-agy}
+  if [[ ! -f "$dir/puente.toml" ]]; then
+    if [[ -f "${PUENTE_PREFIX:-}/share/puente/puente.toml.example" ]]; then
+      cp "${PUENTE_PREFIX}/share/puente/puente.toml.example" "$dir/puente.toml"
+    elif [[ -f "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/puente.toml.example" ]]; then
+      cp "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/puente.toml.example" "$dir/puente.toml"
+    else
+      cat > "$dir/puente.toml" <<'TOML'
+root = "~/agente-puente"
+
+[[agents]]
+id = "claude"
+process = "claude"
+
+[[agents]]
+id = "trader"
+process = ""
+
+[[agents]]
+id = "agy"
+process = "agy"
+TOML
+    fi
+    # fix root in written config
+    # keep default; user can edit
+  fi
+  if [[ ! -f "$dir/PROTOCOLO.md" ]]; then
+    local docs
+    docs="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/docs/PROTOCOLO.md"
+    if [[ -f "$docs" ]]; then
+      cp "$docs" "$dir/PROTOCOLO.md"
+    else
+      printf '# Protocolo\nVer docs/PROTOCOLO.md en el repo.\n' > "$dir/PROTOCOLO.md"
+    fi
+  fi
+  echo "Initialized: $dir"
+  echo "Edit $dir/puente.toml then: puente new alice bob hola <<<'cuerpo'"
+}
+
+cmd_new() {
+  local de=${1:?from} para=${2:?to} slug=${3:?slug}
+  local root dest out ts id creado
+  root=$(config_root)
+  dest="$(inbox_dir "$para")"
+  mkdir -p "$dest"
+  ts=$(date +%Y%m%d-%H%M%S)
+  id="${ts}-${de}-${para}-${slug}"
+  out="$dest/${id}.md"
+  creado=$(date --iso-8601=seconds 2>/dev/null || date -Iseconds)
+  {
+    echo "---"
+    echo "de: $de"
+    echo "para: $para"
+    echo "id: $id"
+    echo "asunto: $slug"
+    echo "estado: pendiente"
+    echo "creado: $creado"
+    echo "responde_a:"
+    echo "---"
+    echo
+    cat
+  } > "$out"
+  echo "$out"
+}
+
+cmd_inbox() {
+  local root agent dir f
+  root=$(config_root)
+  if [[ $# -ge 1 ]]; then
+    dir=$(inbox_dir "$1")
+    [[ -d "$dir" ]] || { echo "No inbox: $dir" >&2; exit 1; }
+    find "$dir" -maxdepth 1 -type f -name '*.md' | sort
+    return
+  fi
+  for dir in "$root"/a-*; do
+    [[ -d "$dir" ]] || continue
+    agent="${dir##*/a-}"
+    while IFS= read -r f; do
+      [[ -n "$f" ]] && printf '%s\t%s\n' "$agent" "$f"
+    done < <(find "$dir" -maxdepth 1 -type f -name '*.md' | sort)
+  done
+}
+
+cmd_done() {
+  local key=${1:?id-or-file} root hecho f
+  root=$(config_root)
+  hecho="$root/hecho"
+  mkdir -p "$hecho"
+  if [[ -f "$key" ]]; then
+    f="$key"
+  else
+    f=$(find "$root"/a-* -maxdepth 1 -type f -name "*${key}*.md" 2>/dev/null | head -1 || true)
+  fi
+  [[ -n "${f:-}" && -f "$f" ]] || { echo "Not found: $key" >&2; exit 1; }
+  # mark estado if sed available
+  if grep -q '^estado:' "$f"; then
+    tmp=$(mktemp)
+    sed 's/^estado:.*/estado: hecho/' "$f" > "$tmp" && mv "$tmp" "$f"
+  fi
+  mv "$f" "$hecho/"
+  echo "$hecho/$(basename "$f")"
+}
+
+cmd_ping() {
+  local agent=${1:?agent} msg=${2:?message} proc target
+  command -v tmux >/dev/null || { echo "tmux required for ping" >&2; exit 1; }
+  proc=$(agent_process "$agent")
+  if [[ -z "$proc" ]]; then
+    echo "No process mapped for agent '$agent' (set process= in puente.toml)" >&2
+    exit 1
+  fi
+  target=$(tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index} #{pane_current_command}' \
+    | awk -v p="$proc" '$2 == p { print $1; exit }')
+  if [[ -z "${target:-}" ]]; then
+    target=$(tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index} #{pane_title}' \
+      | awk -v p="$proc" 'tolower($0) ~ tolower(p) { print $1; exit }')
+  fi
+  [[ -n "${target:-}" ]] || { echo "No tmux pane for process '$proc'" >&2; exit 1; }
+  echo "ping_target=$target" >&2
+  tmux send-keys -t "$target" -l -- "$msg"
+  sleep 0.35
+  tmux send-keys -t "$target" C-m
+}
+
+cmd_watch() {
+  local interval=5
+  if [[ "${1:-}" == "--interval" ]]; then
+    interval=${2:?N}
+  fi
+  echo "Watching $(config_root) every ${interval}s (Ctrl-C to stop)" >&2
+  local prev=""
+  while true; do
+    local cur
+    cur=$(cmd_inbox 2>/dev/null || true)
+    if [[ "$cur" != "$prev" ]]; then
+      echo "---- $(date --iso-8601=seconds 2>/dev/null || date) ----"
+      printf '%s\n' "$cur"
+      prev="$cur"
+    fi
+    sleep "$interval"
+  done
+}
+
+cmd_agents() {
+  local ids
+  if ids=$(list_agent_ids_from_config 2>/dev/null); then
+    printf '%s\n' "$ids"
+  else
+    echo "(no config; default suggestions:)"
+    printf '%s\n' claude trader agy
+  fi
+}
+
+main() {
+  local cmd=${1:-}
+  case "$cmd" in
+    ""|-h|--help|help) usage ;;
+    version|--version|-V) echo "puente $PUENTE_VERSION" ;;
+    init) shift; cmd_init "${1:-}" ;;
+    new) shift; cmd_new "$@" ;;
+    inbox) shift; cmd_inbox "$@" ;;
+    done) shift; cmd_done "$@" ;;
+    ping) shift; cmd_ping "$@" ;;
+    watch) shift; cmd_watch "$@" ;;
+    agents) cmd_agents ;;
+    *) echo "Unknown command: $cmd" >&2; usage >&2; exit 2 ;;
+  esac
+}
+
+main "$@"
