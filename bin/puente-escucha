@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+"""Lanzador opcional; no se carga desde la CLI básica."""
+import sys
+from pathlib import Path
+if sys.version_info < (3, 11):
+    sys.exit('puente-escucha requiere Python 3.11 o posterior')
+raiz = Path(__file__).resolve().parent.parent
+for ruta in (raiz / 'integraciones/escucha', raiz / 'share/agente-puente/escucha'):
+    if (ruta / 'puente_escucha').is_dir():
+        sys.path.insert(0, str(ruta))
+        break
+from puente_escucha.cli import main
+sys.exit(main())

@@ -1,0 +1,28 @@
+# Copiar fuera del repo: ~/.config/puente/escucha.toml
+agente = "agente-b"
+raiz = "~/agente-puente"
+# Estado privado, NO el directorio de distribución del programa.
+estado = "~/.local/state/agente-puente"
+archivos = true
+intervalo = 5
+reavisar = 60
+lote = 20
+
+[adaptador]
+tipo = "json" # json (tarea finita), monitor (ACTION_REQUIRED), codex (cola nativa)
+# Para codex, usar el UUID real de una sesión propia abierta:
+# hilo = "00000000-0000-0000-0000-000000000000"
+# Valores predeterminados del receptor Codex; ajusta según tu catálogo:
+# modelo = "gpt-5.6-sol"
+# esfuerzo = "low"
+
+[slack]
+habilitado = false
+# Poner TU token de bot en ese archivo; nunca su valor en este TOML.
+token_archivo = "~/.config/puente/agente-b.token"
+usuario = "U_ID_PROPIO"
+canales = ["C_ID_PROPIO"]
+intervalo = 60 # Por método; ajustar sólo según límites de tu instalación.
+pagina = 15
+recuperar_segundos = 0 # Primer arranque desde ahora; reinicios conservan cursor.
+seguir_nuevos = false # Alternativa: registrar cada hilo con seguir-hilo.

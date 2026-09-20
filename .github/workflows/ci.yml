@@ -8,5 +8,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Smoke test
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Core and optional listener tests
         run: make test

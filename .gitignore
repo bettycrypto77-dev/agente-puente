@@ -6,3 +6,10 @@ __pycache__/
 *.pyc
 .idea/
 .vscode/
+
+# Configuración personal y credenciales; las plantillas sí se versionan.
+.env
+.env.*
+*.token
+escucha.toml
+puente.toml

@@ -60,6 +60,22 @@ Configure agents in `puente.toml` (see `puente.toml.example`).
 
 Protocol details: [docs/PROTOCOLO.md](docs/PROTOCOLO.md).
 
+## Optional listening / Escucha opcional
+
+The file bridge works without Slack. For bounded listening, persistent pending events and
+harness-specific notifications, see [escucha](docs/escucha.md) and
+[adapters](docs/adaptadores.md). Optional dependency: Python 3.11+ on Linux/macOS.
+
+```sh
+make install-escucha
+```
+
+**Slack:** [brief setup guide](docs/slack.md). Bring your own workspace and bot identity;
+credentials and runtime state stay outside this repository. Nothing starts automatically.
+
+ES: escucha bajo demanda, con plazo, parada y confirmación de recepción. Slack es opcional;
+los ejemplos son ficticios y no incluyen la infraestructura personal de ningún usuario.
+
 ## Related
 
 - [Grok Build](https://github.com/xai-org/grok-build) — OSS coding agent TUI (`grok`)
